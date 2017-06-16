@@ -1,0 +1,874 @@
+---
+title: A Re-analysis of Mortality and Morbidity with Digoxin Use in Heart Failure
+  Patients
+author: "Trish Campos"
+date: 'Version 2: `r Sys.Date()`'
+output:
+  html_document:
+    number_sections: no
+    toc: yes
+    toc_float: yes
+  pdf_document:
+    number_sections: no
+    toc: yes
+geometry: margin=1in
+subtitle: 432 Project 1
+fontsize: 12pt
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(comment = NA)
+```
+
+```{r load packages here, message=FALSE, include=FALSE}
+library(arm); library(tidyverse); library(pander); library(Epi); 
+library(vcd); library(ggplot2); library(gridExtra); library(tableone);
+library(haven); library(broom); library(forcats);  library(rms); 
+library(leaps); library(car); library(MASS); library(ROCR); library(lars); 
+library(QuantPsyc); library(bootstrap); library(data.table); 
+library(dplyr)
+```
+
+# Task 1: Data Source
+The data set was obtained by request from the National Heart, Lung and Blood Institute (NHLBI). In order to maintain anonymity, variables from the orginal dataset were permutated across observations. The original dataset was collected by the Digitalis Investigation Group from over 300 centers in the US and Canada for the purpose of investigating the effect of Digoxin dosage on hospitalization and mortality in patients with heart failure and normal sinus rhythm. 
+
+# Task 2: Load and Tidy the Data
+
+```{r load data, message=FALSE}
+dig.data <- read.csv("dig.csv") %>% tbl_df
+
+# select only females 80 or younger without stroke or diabetes
+dig.data.subset <- dig.data %>% 
+  filter(SEX == "2" & AGE <= "80" & DIABETES == "0" & STRK == "0" 
+         & !is.na(CHFDUR) & !is.na(HEARTRTE) & !is.na(DIABP) & !is.na(FUNCTCLS)
+         & !is.na(PREVMI))
+
+# select only the variables needed
+dig.data.subset <- select(dig.data.subset, recordID, TRTMT, AGE, 
+                    RACE, EJF_PER, BMI, CHFDUR, NSYM, HEARTRTE, 
+                    DIABP, SYSBP, FUNCTCLS, PREVMI, 
+                    HYPERTEN, DIGDOSE, WHF, WHFDAYS,
+                    DIG, DEATH, DEATHDAY)
+
+```
+
+
+```{r, message=FALSE, echo=FALSE}
+# factor the variables
+dig.data.subset$TRTMT.F <- factor(dig.data.subset$TRTMT, levels = c(0, 1), 
+                            labels = c("Placebo", "DIG"))
+dig.data.subset$PREVMI.F <- factor(dig.data.subset$PREVMI, levels = c(0, 1), 
+                               labels = c("No", "Yes"))
+dig.data.subset$RACE.F <- factor(dig.data.subset$RACE, levels = c(1, 2), 
+                             labels = c("White", "Non-White"))
+dig.data.subset$HYPERTEN.F <- factor(dig.data.subset$HYPERTEN, levels = c(0, 1), 
+                             labels = c("No", "Yes"))
+dig.data.subset$WHF.F <- factor(dig.data.subset$WHF, levels = c(0, 1), 
+                             labels = c("No", "Yes"))
+dig.data.subset$DIG.F <- factor(dig.data.subset$DIG, levels = c(0, 1), 
+                             labels = c("No", "Yes"))
+dig.data.subset$FUNCTCLS.F <- factor(dig.data.subset$FUNCTCLS, 
+          levels = c(1, 2, 3, 4), 
+          labels = c("I", "II", "III", "IV"))
+```
+
+Originally there were 6,800 observations. The chosen subset contains women under the age of 80 with no history of diabetes or stroke. I removed 7 observations with missing values in any of the variables. I also removed variables that I have no intention of using. 
+
+# Task 3: Listing of My Tibble
+
+```{r listing of your tibble}
+dig.data.subset
+```
+
+The data set contains 984 observations with 20 columns including the record ID. 
+
+\newpage
+# Task 4: Code Book
+```{r, echo=FALSE}
+codebook <- data_frame(
+    Variable = c("recordID", "TRTMT", "AGE", "RACE", 
+                 "EJF_PER", "BMI", "CHFDUR", "NSYM", 
+                 "HEARTRTE", "DIABP", "SYSBP", "FUNCTCLS", 
+                 "PREVMI", "HYPERTEN", "DIURET", "DIGDOSE", 
+                 "WHF", "WHFDAYS", "DIG", "DEATH", "DEATHDAY"),
+    Type = c("Record ID", "Binary", "Quantitative", "Binary", 
+             "Quantitative", "Quantitative", "Integer", "Integer", 
+             "Quantitative", "Quantitative", "Quantitative", "Categorical", 
+             "Binary", "Binary", "Binary", "Quantitative",
+             "Binary Outcome", "Quantitative Outcome", "Binary Outcome",
+             "Binary Outcome", "Quantitative Outcome"),
+    Notes = c("ID from original dataset", "Treatment: 0 = control (51%), 1 = treated (49%)", 
+              "Age ranging from 28 to 80 in years", "1 = white (81%), 2 = non-white (19%)",
+              "Ejection Fraction percentage [6, 45]", "Body Mass Index (kg/M*M) [16, 56]",
+              "Congestive Heart Failure (CHF) duration months [0, 300]", 
+              "Number of Symptoms of CHF [0, 4]",
+              "Heart Rate (BPM) [44, 132]", "Diastolic Blood Pressure [25, 150]",
+              "Systolic Blood Pressure [80, 190]", 
+              "NYHA Functional Class: I (8.6%), II (49.4%), III (39.7%), IV (2.3%)",
+              "Previous MI: 0 = No (37%), 1 = Yes (63%)", 
+              "History of Hypertension: 0 = No (54.7%), 1 = Yes (45.3%)",
+              "Diuretic Use: 0 = No (15%), 1 = Yes (85%)", 
+              "Digoxin/Placebo Dosage Prescribed [0, 0.5]",
+              "Worsening Heart Failure (WHF): 0 = No (67%), 1 = Yes (33%)", 
+              "Days since randomization to Hospitalization for WHF [0, 1770]",
+              "Digoxin Toxicity: 0 = No (98%), 1 = Yes (2%)",
+              "Death: 0 = No (68%), 1 = Yes (32%)", "Days since randomization to Death [1, 1770]")
+)
+
+pander(codebook, split.cells = c(10, 10, 53))
+```
+
+```{r, include=FALSE}
+vars <- c("AGE", "RACE.F", 
+                 "EJF_PER", "BMI", "CHFDUR", "NSYM", 
+                 "HEARTRTE", "DIABP", "SYSBP", "FUNCTCLS.F", 
+                 "PREVMI.F", "HYPERTEN.F", "DIURET.F", "DIGDOSE", 
+                 "WHF.F", "WHFDAYS", "DIG.F", "DEATH.F", "DEATHDAY")
+CreateTableOne(vars = vars, data = dig.data.subset)
+```
+
+# Task 5: My Subjects
+
+Patients with heart failure, normal sinus rhythm, and left ventricular ejection fractions of less than or equal to 0.45 were included in the trial. This subset of the data includes only women with no history of diabetes or stroke. The patients were taken from 300 centers in the United States and Canada between February 1991 and September 1993 with follow ups until December of 1995.     
+
+# Task 6: My Variables
+
+  + `recordID`: Original Record ID for patients.
+  + `TRMT`: Binary categorical variable indicating whether or not the patient got the digoxin treatment or not. A value of 0 indicates not treated.
+  + `AGE`: Patient age in years at the time of randomization. 
+  + `RACE`: Patient race, either White (1) or Non-white (2).
+  + `EJF_PER`: Patient Ejection Fraction expressed as a percentage. This gives a measure of how much blood leaves the heart with each contraction. Higher is better. 
+  + `BMI`: Body Mass Index, height to mass ratio used to indicate obesity.
+  + `CHFDUR`: Congestive Heart Failure Duration, the number of months patient has been in congestive heart failure prior to randomization
+  + `NSYM`: Number of Symptoms of Congestive Heart Failure, the sum of 8 possible symptoms including: Rales, Elevated Jugular Venous Pressure, Peripheral Edema, Dyspnea at rest, Dyspnea on exertion, Limitation of activity, S3, Radiologic evidence of congestion. If four or more symptoms were noted, the value was given a 4. 
+  + `HEARTRTE`: Patient heartrate in beats per minute prior to randomization. 
+  + `DIABP`: Patient diastolic blood pressure (mm Hg) prior to randomization.
+  + `SYSBP`: Patient sytolic blood pressure (mm Hg) prior to randomization.
+  + `FUNCTCLS`: New York Heart Association Functional Class. Categorical variable ranging from class I - IV that assesses patient's ability to perform physical activity. Higher class numbers indicate more severe physical limitations. 
+  + `PREVMI`: Previous myocardial infarction (1) or not (0).
+  + `HYPERTEN`: Whether the patient has a history of hypertension (1) or not (0).
+  + `DIURET`: Whether the patient is on non-potassium sparing diuretics (1) or not (0).
+  + `DIGDOSE`: Prescribed dosage of digoxin in miligrams/day. 
+  + `WHF`: Worsening Heart Failure. If the patient was hospitalized, did the symptoms of heart failure increase?
+  + `WHFDAYS`: Number of days since randomization until hospitalization for worsening heart failure. 
+  + `DIG`: Whether the patient exhibited digoxin toxicity (1) or not (0). 
+  + `DEATH`: Whether the patient died (1) or not (0).
+  + `DEATHDAY`: Number of days since randomization until death or last contact date if alive.
+  + *Any variable ending in `.F` denotes the corresponding factor variable*
+
+\newpage
+# Task 7: My Planned Linear Regression Model
+
+The quantiative outcome for the linear regression model will be `WHFDAYS` or the days since randomization until hospitalization for worsening heart failure with the following predictors:
+
+  + Age (quantiative)
+  + NYHA Functional Class (multi-categorical)
+  + Treatment
+  + Prescribed Digoxin dosage
+  + Race
+  + Ejection Fraction
+  + BMI
+  + Congestive Heart Failure Duration
+  + Number of Heart Failure Symptoms
+  + Heart rate 
+  + Previous MI
+  + Diagnosed Hypertension
+
+# Task 8: My Planned Logistic Regression Model
+
+The binary outcome for the logistic regression model will be mortality with the following predictors:
+
+  + Age (quantiative)
+  + NYHA Functional Class (multi-categorical)
+  + Treatment
+  + Prescribed Digoxin dosage
+  + Race
+  + Ejection Fraction
+  + BMI
+  + Congestive Heart Failure Duration
+  + Number of Heart Failure Symptoms
+  + Heart rate 
+  + Previous MI
+  + Diagnosed Hypertension
+                    
+# Task 9: Affirmation
+
+The data set meets all of the requirements specified in the project instructions. I am certain that it is completely appropriate for these data to be shared with anyone, without any conditions. There are no concerns about privacy or security.
+
+# Task 10: Linear Regression {.tabset}
+
+Predict the number of days since randomization until hospitalization for worsening heart failure in patients on digoxin versus the control. 
+
+```{r, message=FALSE, echo=FALSE}
+# partition the data into Training and Test Samples
+set.seed(2718281)
+# use 75% of the data in the training sample. 738 observations.
+dig.data.subset.training <- dig.data.subset %>%  sample_frac(0.75)
+dig.data.subset.test <- anti_join(dig.data.subset, dig.data.subset.training, 
+                                  by = "recordID")
+```
+
+## Outcome Distribution 
+```{r, message=FALSE, fig.height=4, fig.width=5}
+ggplot(dig.data.subset.training, aes(x = WHFDAYS)) +
+  geom_histogram(fill = "hotpink", col = "white") +
+  labs(title = "Untransformed Continuous Outcome",
+       x = "Worsening Heart Failure Days",
+       subtitle = "Days since randomization to Hospitalization for Worsening HF") +
+  theme_classic()
+```
+
+```{r, include=FALSE, eval=FALSE}
+# Generate a qqplot to check for normality
+qqnorm(dig.data.subset.training$WHFDAYS)
+qqline(dig.data.subset.training$WHFDAYS)
+# Nonnormal, bimodal data again 
+```
+
+```{r, include=FALSE, eval=FALSE}
+# Run a boxcox to check for potential transformations even 
+# though boxcox isn't meaninful for bimodal outcomes
+boxCox(lm(WHFDAYS + 1 ~ AGE + FUNCTCLS.F + TRTMT.F + DIGDOSE + RACE.F + EJF_PER + BMI + CHFDUR + NSYM + HEARTRTE + PREVMI.F + HYPERTEN.F, data = dig.data.subset.training))
+# BoxCox suggests a transformation to the 1.0 or keeping it the same
+```
+
+The outcome clusters around 50 and again around 1300 days, giving a bimodal distribution. This could prove challening to fit a linear model. The data are reasonably symmetrical, however, so I will not transform. 
+
+```{r, message=FALSE}
+plot(spearman2(WHFDAYS ~ AGE + FUNCTCLS + TRTMT.F + DIGDOSE + RACE.F + EJF_PER + BMI + CHFDUR + NSYM + HEARTRTE + PREVMI.F + HYPERTEN.F, 
+                data = dig.data.subset))
+```
+
+The Spearman plot suggests that if a cubic spline will be used in the model, it should be fit to the ejection fraction percentage (continuous variable), perhaps with an interaction term including functional class.  
+
+## Kitchen Sink
+
+```{r, message=FALSE}
+# use all the variables with ordinary least squares
+# include a cubic spline with interaction terms
+dd <- datadist(dig.data.subset.training)
+options(datadist = "dd")
+
+model.ks <- ols(WHFDAYS ~ AGE + FUNCTCLS + TRTMT.F + DIGDOSE + RACE.F + rcs(EJF_PER,3) + BMI + CHFDUR + NSYM + HEARTRTE + PREVMI.F + HYPERTEN.F, 
+                data = dig.data.subset.training, x = TRUE, y = TRUE)
+model.ks
+rms::vif(model.ks)
+```
+
+The variables NYHA functional class and race were signficant in this model. Age was significant to the 90% level. From this output, older patient age, higher functional class (more physical impairment), and non-white status were associated with a shorter timeframe to hospitalization. (Remember, we want *more* days until hospitalization for heart failure.) Interestingly, neither the treatment (digoxin) nor the dosage were significant in this model. Note the abysmal $R^2$ value  of `r round(model.ks$stats[4],3)` and the $R_{adj}$ of 0.047; perhaps the model is over-fitted. 
+
+The variance inflation factors are all very close to 1 (and certainly below 5, with the exception of the nonlinear terms); collinearity is not an issue here.
+
+```{r, message=FALSE}
+# plot the anova values of the variables
+plot(anova(model.ks))
+```
+
+The anova plot suggests that only Functional Class and Race were significant at the 5% level, while Age and Ejection fraction were significant at the 10% level.
+
+```{r, message=FALSE}
+plot(summary(model.ks), main="")
+```
+
+The odds ratio plot for the kitchen sink model shows that `AGE`, `FUNCTCLS`, `EJF_PER` and `RACE.F` have significant effects on the outcome. 
+
+```{r, message=FALSE, fig.height=9, fig.width=6}
+plot(nomogram(model.ks))
+```
+
+```{r, message=FALSE}
+plot(calibrate(model.ks))
+```
+
+This calibration plot is quite nonlinear, suggesting that this model does not predict optimally in any regions. 
+
+## Best Subsets
+
+```{r, message=FALSE}
+# save the model predictors
+predictors <- with(dig.data.subset.training, cbind(AGE, EJF_PER, 
+                              BMI, CHFDUR, NSYM, HEARTRTE, 
+                              FUNCTCLS, DIGDOSE, TRTMT.F, 
+                              PREVMI.F, RACE.F, HYPERTEN.F))
+
+x1 <- regsubsets(predictors, dig.data.subset.training$WHFDAYS, nvmax = 12)
+rs <- summary(x1)
+rs
+```
+
+Performing a best subsets approach shows that the NYHA functional class is in all models, with ejection fraction in all but two. The instance of a previous myocardial infarction is represented in only 1 out of the 12 models. 
+
+```{r, message=FALSE, include=FALSE}
+## tabulate adjusted R squared from all 12 models
+# not included in final output
+temp <- data.frame(p = 2:13, Radj = round(rs$adjr2, 3))
+#pander(t(temp))
+```
+ 
+```{r, message=FALSE, include=FALSE}
+# Minimize BIC
+# not included in final output
+temp$bic <- round(rs$bic, 2)
+#pander(t(temp))
+```
+
+```{r, message=FALSE, include=FALSE}
+# Calculate AIC with n = 738 (sample size)
+# not included in final output
+rs$aic.cor <- 738*log(rs$rss/738 + 2*(2:13)) +
+  (2 * (2:13) * ((2:13) + 1)/(738 - (2:13) - 1))
+temp$aic.cor <- round(rs$aic.cor, 2)
+#pander(t(temp))
+```
+
+```{r, message=FALSE, include=FALSE}
+# Calculate Cp statistic
+# not included in final output
+temp$Cp <- round(rs$cp, 1)
+temp$dif <- round(rs$cp, 1) - 2:13
+#pander(t(temp))
+```
+
+```{r}
+pander(t(temp))
+```
+
+Models with 6 - 9 predictors (including intercept) had the highest $R_{adj}$ values, `r temp[6,2]`. Variables typically included were: Age, Ejection Fraction, Functional Class, and Digoxin Dose. Because we want to maximize $R_{adj}$, while minimizing the BIC, AIC, and $C_p$, model 4 is looking pretty good.  Model 4 includes the intercept, ejection fraction, functional class, and race. See the plot below.
+
+```{r, echo=FALSE}
+# plot these things
+par(mfrow=c(2,2))
+
+# Adjusted R-squared Plot
+m2 <- max(rs$adjr2)
+m1 <- which.max(rs$adjr2)
+plot(rs$adjr2 ~ I(2:13), ylab="Adjusted R-squared", 
+     xlab="# of Fitted Coefficients, with Intercept",
+     main="Adjusted R-Squared")
+lines(spline(rs$adjr2 ~ I(2:13)))
+#arrows(m1+1, m2-0.02, m1+1, m2)
+text(m1+1, m2-0.03, paste("max =", format(m2, digits=3)))
+text(m1+1, m2-0.045, paste("with", format(m1+1, digits=1), 
+                        "coeffs."), pos=3)
+
+# Cp Plot
+plot(rs$cp ~ I(2:13), 
+     ylab="Cp Statistic", 
+     xlab="p = # of Fitted Coefficients", 
+     pch=16, main="Cp")
+abline(0,1)
+
+# Next calculate bias-corrected AIC
+# recall n = 64, and we have 10 models
+# so that's 2-11 coefficients to fit
+
+# Bias-Corrected AIC plot with arrow included
+# to indicate minimum AIC-corrected
+m2 <- min(rs$aic.cor)
+m1 <- which.min(rs$aic.cor)
+plot(rs$aic.cor ~ I(2:13), ylab="Bias-Corrected AIC", 
+     xlab="# of Fitted Coefficients", pch=16, cex=1.5, 
+     col="tomato", main="Bias-Corrected AIC")
+#arrows(m1+1, m2+3, m1+1, m2+1)
+
+# plot BIC with indicating arrow for minimizer
+m2 <- min(rs$bic)
+m1 <- which.min(rs$bic)
+plot(rs$bic ~ I(2:13), ylab="BIC", xlab="# of Fitted Coefficients", 
+     pch=16, cex=1.5, col="slateblue", main="BIC")
+#arrows(m1+1, m2+4, m1+1, m2+1)
+```
+
+By inspection, the $C_p$ statistic is best with 4 coefficients (intercept included), however the Adjusted R-squared doesn't level off until around 6 coefficients. Similarly the Bias-Corrected AIC is still quite large with 4. The BIC looks best with 3 coefficients, however it is only marginally better than the model with 4. 
+
+```{r, include=FALSE}
+par(mfrow=c(1,1))
+```
+
+### Model Comparison
+
+Compare 4 models based on best values for Cp, Corrected AIC, BIC, and Adjusted $R^2$. The candidate models include:
+
+```{r, message=FALSE, echo=FALSE}
+# build summary table giving details on the models being compared
+best_subsets <- data_frame(
+  Summary = c("Cp", "Corr AIC", "BIC", "Adjusted R2"),
+  Coefficients = c("4", "12", "3", "6"),
+  Predictors = c("Functional Class, Race, Ejection Fraction", 
+                 "Age, Functional Class, Treatment, Digoxin Dose, Race, BMI, Heart Failure Duration, Number of HF symptoms, Heart rate, Ejection Fraction",
+                 "Functional Class, Race",
+                 "Age, Functional Class, Race, Heart Failure Duration, Ejection Fraction")
+)
+
+pander(best_subsets, split.cells = c(12, 5, 53), caption = "Model Descriptions for ANOVA Comparison")
+```
+
+
+```{r, message=FALSE}
+# models are named by adding 1 to the number of variables. 
+lm1 <- lm(WHFDAYS ~ 1, data = dig.data.subset.training)
+lm3 <- lm(WHFDAYS ~ FUNCTCLS + RACE.F, 
+          data = dig.data.subset.training)
+lm4 <- lm(WHFDAYS ~ FUNCTCLS + RACE.F + EJF_PER, 
+          data = dig.data.subset.training)
+lm6 <- lm(WHFDAYS ~ AGE + FUNCTCLS + RACE.F + CHFDUR + 
+            EJF_PER, data = dig.data.subset.training)
+lm12 <- lm(WHFDAYS ~ AGE + FUNCTCLS + TRTMT.F + DIGDOSE + RACE.F + 
+              BMI + CHFDUR + NSYM + HEARTRTE + EJF_PER +
+              HYPERTEN.F, data = dig.data.subset.training)
+
+anova(lm12, lm6, lm4, lm3, lm1)
+```
+
+This ANOVA comparison suggests that I use the model with 3 variables, including functional class, race, and the intercept. However, I will use the model with 4 variables as I am not constrained by degrees of freedom.   
+
+### Model Calibration
+```{r, message=FALSE}
+m4.ols <- ols(WHFDAYS ~ EJF_PER + FUNCTCLS + RACE.F, 
+              data = dig.data.subset.training, x = TRUE, y = TRUE)
+plot(calibrate(m4.ols))
+```
+
+The model in question: $WHFDAYS = EJF + FUNCTCLS + RACE.F$ 
+
+This model could be worse. Specifically, values within 800 to around 1000 days are reasonably well described while values outside of this range are overpredicted. See coefficients in the table below.
+
+```{r, message=FALSE, echo=FALSE}
+m4.ols.confint <- round(confint_tidy(m4.ols), 2)
+pander(cbind(tidy(round(m4.ols$coefficients, 2)), m4.ols.confint), caption = "Model 4 Coefficients, 95% CI")
+```
+
+```{r}
+# plot nomogram for model 4
+plot(nomogram(m4.ols))
+```
+
+## Lasso
+
+Use the Lasso method to produce a model. 
+
+```{r, message=FALSE}
+## Lasso Method
+lassopreds <- with(dig.data.subset, cbind(AGE, EJF_PER, 
+                              BMI, CHFDUR, NSYM, HEARTRTE, 
+                              FUNCTCLS, DIGDOSE, TRTMT.F, 
+                              PREVMI.F, RACE.F, HYPERTEN.F))
+
+lasso1 <- lars(lassopreds, dig.data.subset$WHFDAYS, type="lasso")
+plot(lasso1)
+```
+
+```{r, message=FALSE, include=FALSE}
+## Lasso Method/NOT INCLUDED IN FINAL ANALYSIS
+lassopreds.numeric <- with(dig.data.subset, cbind(AGE, EJF_PER, 
+                              BMI, CHFDUR, NSYM, HEARTRTE, 
+                              FUNCTCLS, DIGDOSE, TRTMT, 
+                              PREVMI, RACE, HYPERTEN))
+
+lasso1.numeric <- lars(lassopreds.numeric, dig.data.subset$WHFDAYS, type="lasso")
+plot(lasso1.numeric)
+```
+
+```{r, message=FALSE}
+# plot the Mean Square Errors of to see where the fraction is minimized
+set.seed(314159)
+lassocv <- cv.lars(lassopreds, dig.data.subset$WHFDAYS, K=12)
+
+# calculate the minimum L1 fraction
+minL1 <- lassocv$index[which.min(lassocv$cv)]
+minL1
+```
+
+The mean squared error is minmized at `r round(minL1, 3)`. This suggests using a model with around 7 predictors - many more than model in 4. 
+
+```{r, message=FALSE, warning=FALSE}
+# indentify the Lasso Coefficients
+coef.cv <- coef(lasso1, s=minL1, mode="fraction")
+Lasso1.nz <- round(coef.cv[c("AGE", "EJF_PER", "CHFDUR", "FUNCTCLS", "DIGDOSE", "TRTMT.F", "RACE.F")], 2)
+
+# Compare the Non Zero coefficients
+
+lm1 <- lm(WHFDAYS ~ AGE + EJF_PER + CHFDUR + FUNCTCLS + DIGDOSE + TRTMT.F + RACE.F, 
+          data = dig.data.subset)
+lm1.coef <- round(lm.beta(lm1),3)
+
+pander(rbind(Lasso1.nz, lm1.coef), caption="Compare the Lasso and lm Coefficients")
+```
+
+The lasso model suggests using the variables Age, Ejection Fraction, Functional Class, Digoxin Dose, Treatment, Race, and perhaps Heart Failure Duration. Ejection Fraction, Functional Class, and Race fit well with the best subsets model. The coefficients are quite different, suggesting that neither well predicts the model. There are no sign changes, however. 
+
+## Generalize Model 4
+
+```{r, include=FALSE, message=FALSE}
+#Create factors in the larger dataset
+dig.data$RACE.F <- factor(dig.data$RACE, levels = c(1, 2), 
+                             labels = c("White", "Non-White"))
+dig.data$TRTMT.F <- factor(dig.data$TRTMT, levels = c(0, 1), 
+                            labels = c("Placebo", "DIG"))
+dig.data$PREVMI.F <- factor(dig.data$PREVMI, levels = c(0, 1), 
+                               labels = c("No", "Yes"))
+dig.data$HYPERTEN.F <- factor(dig.data$HYPERTEN, levels = c(0, 1), 
+                             labels = c("No", "Yes"))
+```
+
+
+### Compare the Training and Test Data
+
+Although model 4 (`AGE`, `FUNCTCLS`, `RACE.F`) leaves a lot to be desired with an $R^2$ of `r round(m4.ols$stats[4], 3)`, I will use it to see how well this model generalizes to my test data. Look at Mean Square Prediction Error and Mean Absolute Prediction Error.
+
+```{r, message=FALSE, echo=FALSE}
+# Apply test data to relevant model and calculate outcome
+
+# Make new tibble for Lasso Predictions to remove non numeric stuff and avoid scale.default errors
+lasso.test <- select(dig.data.subset.test, FUNCTCLS, EJF_PER, 
+                     RACE, AGE, DIGDOSE, CHFDUR, TRTMT, NSYM, 
+                     HYPERTEN, HEARTRTE, PREVMI, BMI)
+
+# I get errors for m4 and model.ks unless I turn the test data into a dataframe
+m4.ols.preds <- predict(m4.ols, newdata = as.data.frame(dig.data.subset.test))
+lasso1.preds <- predict.lars(lasso1.numeric, newx = lasso.test, type = c("fit"))
+model.ks.preds <- predict(model.ks, newdata = as.data.frame(dig.data.subset.test))
+
+# Calculate Errors
+m4.ols.errors <- dig.data.subset.test$WHFDAYS - m4.ols.preds
+lasso1.errors <- dig.data.subset.test$WHFDAYS - lasso1.preds$fit
+model.ks.errors <- dig.data.subset.test$WHFDAYS - model.ks.preds
+
+# Take the Aboslute Value of the Errors
+m4.ols.abserrors <- abs(m4.ols.errors) 
+lasso1.abserrors <- abs(lasso1.errors)
+model.ks.abserrors <- abs(model.ks.errors) 
+
+# Square the Absolute Errors
+m4.ols.sqerrors <- m4.ols.errors^2
+lasso1.sqerrors <- lasso1.errors^2
+model.ks.sqerrors <- model.ks.errors^2 
+
+# Select the appropriate summaries and put it all into a table
+T1 <- matrix(c(453.9, 278500, 1034.0, 
+               807.1, 3256361, 1804.5,
+               454.6, 280700, 1026.0), 
+             ncol=3, nrow=3, byrow=TRUE)
+rownames(T1) <- c("Model 4", "Lasso", "Kitchen Sink")
+colnames(T1) <- c("MAPE", "MSPE", "Max Abs. Error")
+
+pander(T1)
+```
+
+While none of these are particularly good, I still like Model 4 the best given that its mean absolute and mean square prediction errors are smallest. The max absolute errors are close enough in both model 4 and kitchen sink that the difference is negligible.
+
+### Does Model 4 Generalize to the Whole Dataset?
+
+I actually hope that this model doesn't generalize to the whole dataset as I chose a relatively healthy subset of patients (females under 80 with no history of stroke or diabetes).
+
+```{r, message=FALSE}
+# Use m4 with the entire dataset (n=6800)
+m4.final <-  ols(WHFDAYS ~ EJF_PER + FUNCTCLS + RACE.F, 
+              data = dig.data, x = TRUE, y = TRUE)
+
+# Show coefficients with confidence interval
+m4.final.confint <- round(confint_tidy(m4.final), 2)
+pander(cbind(tidy(round(m4.final$coefficients, 2)), m4.final.confint), 
+       caption = "Model 4 Generalized Coefficients, 95% CI")
+```
+
+For ease of comparison the coefficients from model 4 applied to both datasets are reproduced below:
+ 
+```{r, message=FALSE, echo=FALSE}
+# Compare Coefficients
+coef.table <- data_frame(
+  Model = c("Model 4 Training", "Model 4 General"),
+  Intercept = c("1096 [883, 1308]", "940 [877, 1002]"),
+  EJF_PER = c("4.63 [0.34, 8.93]", "8.64 [7.25, 10.03]"),
+  FUNCTCLS = c("-127 [-185, -69.5]", "-125 [-143, -107]"),
+  RACE.F = c("-174 [-269, -80.4]", "-92.5 [-127, -58.2]"))
+
+pander(coef.table, split.cells = c(10, 17, 18, 18, 20), 
+       caption = "Model 4 Coefficient Estimates [95% CI]")
+```
+
+The coefficients are actually quite similar. `EJF_PER` and `RACE.F` show the greatest differences in the estimates, however their 95% CI still overlap. 
+
+```{r, message=FALSE}
+m4.final
+```
+
+Model 4 actually fits the general dataset better than the dataset it was fit to with an $R^2$ of `r round(m4.final$stats[4], 3)` as compared to `r round(m4.ols$stats[4],3)` of the subsetted data. However, neither of these values is great, so this is likely an artifact of greater scatter in the larger dataset.
+
+```{r, message=FALSE}
+plot(calibrate(m4.final))
+```
+
+
+The calibration plot fit to all of the data is more linear than that fit to the subset. The overall fit is quite good except for the region above 1050 days, where the model tends to overpredict.
+
+# Task 11: Logistic Regression {.tabset}
+
+Predict mortality on the basis of the same variables used in the linear regression model. 
+
+## Spearman $\rho^2$
+```{r, message=FALSE}
+plot(spearman2(DEATH ~ AGE + FUNCTCLS + TRTMT.F + DIGDOSE + RACE.F + EJF_PER + BMI + CHFDUR + NSYM + HEARTRTE + PREVMI.F + HYPERTEN.F, data = dig.data.subset))
+```
+
+
+From the Spearman plot, NYHA Functional Class and Ejection Fraction look to be the most important predictors for Mortality. I will add a non-linear term to ejection fraction percentage and I will include the interaction term functional class.
+
+## Kitchen Sink: Model 1
+
+```{r, message=FALSE, echo=FALSE}
+## Use all the predictors
+d <- datadist(dig.data.subset)
+options(datadist = "d")
+lrm.model.1 <- lrm(DEATH ~ AGE + FUNCTCLS + TRTMT.F + DIGDOSE + RACE.F + rcs(EJF_PER,3) + BMI + CHFDUR + NSYM + HEARTRTE + PREVMI.F + HYPERTEN.F, data = dig.data.subset, x = TRUE, y = TRUE)
+lrm.model.1
+```
+
+This model includes the same predictors as in the linear regression. In this case we are predicting mortality. The C statistic is low, at 0.646. The $R^2$ is also very low, `r round(lrm.model.1$stats[10],3)`. Of note, only Functional Class and Ejection Fraction are significant. This is not unexpected, as these two variables were also found in the linear regression model. As expected, higher ejection fractions seem to be associated with a lower probability of mortality while the higher functional class (most physical impairment) is associated with greater probabilities of mortality.  
+
+```{r, echo=FALSE}
+# plot the anova values
+plot(anova(lrm.model.1))
+```
+
+Again, functional class and ejection fraction are most important here. However, the anova plot suggests that Heart Rate may also be important in the model. 
+
+### Coefficient Table: Model 1
+
+```{r, echo=FALSE, message=FALSE}
+lrm.model.1.coef <- tidy(summary(lrm.model.1))
+
+# Extract Even Rows and Confidence Intervals
+lrm.model.1.tidy <- lrm.model.1.coef[c(FALSE, TRUE), 
+                                     c("Effect", "Lower.0.95", "Upper.0.95")]
+
+# set rownames
+invisible((setattr(lrm.model.1.tidy, "row.names", c("AGE", "FUNCTCLS", "DIGDOSE",
+                                    "EJF_PER", "BMI", "CHFDUR", "NSYM", "HEARTRTE",
+                                    "TRTMT.F", "RACE.F", "PREVMI.F", "HYPERTEN.F"))))
+
+pander(lrm.model.1.tidy, caption = "Odds Ratios: Model 1")
+```
+
+From the exponentiated coefficient table, there are significant effects from elevated Functional Class (1.67 times as likely) and higher ejection fraction (0.66 times as likely). Neither treatment nor digoxin dose had significant effects on mortality. 
+
+### Calibration Plot: Model 1
+```{r, message=FALSE, echo=FALSE}
+plot(calibrate(lrm.model.1))
+```
+
+The model 1 calibration plot is quite nonlinear, suggesting that while the model predicts reasonably well at low probabilities, values above 0.4 are overpredicted. 
+
+### Plot Predictions: Model 1
+
+```{r, message=FALSE}
+ggplot(Predict(lrm.model.1, EJF_PER = 0:45, FUNCTCLS, TRTMT.F, fun=plogis)) +
+    theme_bw() +
+  
+    labs(x = "Ejection Fraction Percentage",
+         y = "Pr(Death)",
+         title = "Model 1 Predictions",
+         subtitle = "Across Treatment Groups and Functional Class, holding all other predictors at their medians")
+```
+
+Plotting the probability of mortality predictions from Model 1 shows that Functional Class had a significant effect on the probability of mortality within the study period. Digoxin use was also associated with a higher risk of mortality, however the confidence intervals are overlapping and lack significance. Note the limitations of the model: an ejection fraction of 0 should give a mortality of 1 and we do not see that here. 
+
+### Nomogram: Model 1
+
+```{r, fig.height=9.5, fig.width=7}
+plot(nomogram(lrm.model.1, fun=plogis, funlabel = "Probability of Mortality"))
+```
+
+```{r, message=FALSE, include=FALSE, eval=FALSE}
+## Use all the predictors
+e <- datadist(dig.data.subset)
+options(datadist = "e")
+
+glm.model.1 <- glm(DEATH ~ AGE + FUNCTCLS + TRTMT.F + DIGDOSE + RACE.F + rcs(EJF_PER,3) + BMI + CHFDUR + NSYM + HEARTRTE + PREVMI.F + HYPERTEN.F, data = dig.data.subset, x = TRUE, y = TRUE, family = binomial(link = logit))
+summary(glm.model.1)
+```
+
+```{r ROC Kitchen Sink, message=FALSE, include=FALSE, eval=FALSE}
+#lrm.model.1.df <- as.data.frame(lrm.model.1)
+
+# requires ROCR package
+prob <- predict(glm.model.1, data = dig.data.subset, type="response")
+pred <- prediction(prob, dig.data.subset$DEATH)
+# rest of this doesn't need much adjustment except for titles
+perf <- performance(pred, measure = "tpr", x.measure = "fpr")
+auc <- performance(pred, measure="auc")
+auc <- round(auc@y.values[[1]],3)
+roc.data <- data.frame(fpr=unlist(perf@x.values),
+                       tpr=unlist(perf@y.values),
+                       model="GLM")
+
+ggplot(roc.data, aes(x=fpr, ymin=0, ymax=tpr)) +
+    geom_ribbon(alpha=0.2) +
+    geom_line(aes(y=tpr)) +
+    #geom_abline(a = 0, b = "fpr") + 
+    labs(title = paste0("ROC Curve w/ AUC=", auc),
+         subtitle = "Logistic Regression Model 1 for Digoxin Subsetted Data") +
+  theme_bw()
+```
+
+## Model 1 Validation
+```{r, message=FALSE}
+# Use Backwards elimination to validate 
+set.seed(314159)
+validate(lrm.model.1, bw=TRUE, B=10)
+```
+
+The backwards elimination model validation suggested retaining Functional Class and Ejection Fraction Percentage. Age was retained in one of the cases. 
+
+### Calculating the C Statistic 
+$$
+C = 0.5 + \frac{D_{xy}}{2} = 0.5 + \frac{0.181}{2} = 0.591
+$$
+
+This C statistic is terrible, predicting mortality only slightly better than random chance. Compare this to the value obtained earlier of 0.646. The search for a better model begins!
+
+## Model 2
+
+Create a new model incorporating `HEARTRTE`, `FUNCTCLS`, and `EJF_PER`. I opted to include `HEARTRTE` instead of `AGE` despite the backwards validation results as  `HEARTRTE` was almost significant via the anova plot from Model 1. 
+
+```{r, message=FALSE}
+dd <- datadist(dig.data.subset)
+options(datadist = "dd")
+
+model.2 <- lrm(DEATH ~ rcs(EJF_PER, 3)*FUNCTCLS + HEARTRTE,
+               data = dig.data.subset, x = T, y = T)
+model.2
+```
+
+The model is quite terrible with an $R^2$ of `r round(model.2$stats[10],3)` and a C statistic of `r round(model.2$stats[6],3)`. Only `EJF_PER` appears significant to the 10 percent level. 
+
+### Anova Plot: Model 2
+
+```{r, message=FALSE}
+plot(anova(model.2))
+```
+
+Here Functional Class and Ejection Fraction Percentage appear significant. 
+
+### Coefficient Table: Model 2
+
+```{r, echo=FALSE, message=FALSE}
+model.2.coef <- tidy(summary(model.2))
+
+# Extract Even Rows and Confidence Intervals
+model.2.tidy <- model.2.coef[c(FALSE, TRUE), 
+                             c("Effect", "Lower.0.95", "Upper.0.95")]
+
+# set rownames
+invisible((setattr(model.2.tidy, "row.names", c("EJF_PER", "FUNCTCLS", "HEARTRTE"))))
+
+pander(model.2.tidy, caption = "Odds Ratios: Model 2")
+```
+
+The table above lists the exponentiated coefficients from model 2. Having a higher ejection fraction is associated with a lower mortality (0.63 times as likely). Patients with higher functional classes (more physical impairment) were 1.8 times as likely to die. Higher heart rates were associated with lower mortality (0.87 times as likely.) 
+
+### Calibration Plot: Model 2
+
+```{r, echo=FALSE, message=FALSE}
+plot(calibrate(model.2))
+```
+
+This model is an improvement over the kitchen sink model. While probabilities under 0.2 tend to be underpredicted, the remainder of the data is fit reasonably well.  
+
+### Plot Predictions: Model 2
+
+```{r, message=FALSE, warning=FALSE}
+# Use model 2 to predict mortality 
+ggplot(Predict(model.2, EJF_PER = 0:45, FUNCTCLS, fun=plogis)) +
+    theme_bw() +
+    labs(x = "Ejection Fraction Percentage",
+         y = "Pr(Death)",
+         title = "Model 2 Predictions",
+         subtitle = "Across Functional Class, holding Heart Rate at 80 BPM")
+```
+
+This plot is interesting: 
+
+  + Above ejection fractions of about 8% the probability of mortality is increased in higher functional classes.
+  + The mortality for patients in Functional Class IV is relatively insensitive to ejection fraction.
+  + Patients in Functional Class I benefit the most with increased ejection fraction
+  + This whole trend reverses at values below EFs of 8%. This is probably an artifact of the model used. This gives me serious reservations about this model.  
+
+### Nomogram: Model 2
+
+```{r, echo=FALSE, message=FALSE, fig.height=7, fig.width=6}
+plot(nomogram(model.2, fun=plogis, funlabel = "Probability of Mortality"))
+```
+
+The nomogram suggests that higher heartrates are associated with a lower probability of mortality. Higher ejection fractions were also associated with lower mortality, especially at lower functional classes.
+
+## Generalize Model 1
+
+Although neither of these models were great, I will apply the larger subset of the data to model 1, because this dataset is much larger and will likely be harder to overfit. I also suspect that the graphical predictions from Model 2 don't make physical sense. 
+
+```{r, message=FALSE, echo=FALSE}
+## Apply the entire dataset to Model 1
+d <- datadist(dig.data)
+options(datadist = "d")
+lrm.model.1.final <- lrm(DEATH ~ AGE + FUNCTCLS + TRTMT.F + DIGDOSE + RACE.F + rcs(EJF_PER,3) + BMI + CHFDUR + NSYM + HEARTRTE + PREVMI.F + HYPERTEN.F, data = dig.data, x = TRUE, y = TRUE)
+lrm.model.1.final
+```
+
+The $R^2$ statistic (`r round(lrm.model.1.final$stats[10],3)`) is marginally better while the C statistic (`r round(lrm.model.1.final$stats[6],3)`) is slightly worse. Again, Ejection Fraction and Functional Class appear to be the most important predictors.
+
+### Coefficient Table: Generalized Model 1
+```{r, echo=FALSE, message=FALSE}
+lrm.model.1.final.coef <- tidy(summary(lrm.model.1.final))
+
+# Extract Even Rows and Confidence Intervals
+lrm.model.1.final.tidy <- lrm.model.1.final.coef[c(FALSE, TRUE), 
+                             c("Effect", "Lower.0.95", "Upper.0.95")]
+
+# set rownames
+invisible((setattr(lrm.model.1.final.tidy, "row.names", c("AGE", "FUNCTCLS", "DIGDOSE",
+                                    "EJF_PER", "BMI", "CHFDUR", "NSYM", "HEARTRTE",
+                                    "TRTMT.F", "RACE.F", "PREVMI.F", "HYPERTEN.F"))))
+
+pander(lrm.model.1.final.tidy, caption = "Odds Ratios: Generalized Model 1")
+```
+
+These coefficients are actually quite similar to what was obtained earlier with the subsetted data; all of the confidence intervals overlap.
+
+### Calibration Plot: Generalized Model 1
+```{r, echo=FALSE, message=FALSE}
+plot(calibrate(lrm.model.1.final))
+```
+
+The calibration plot is much more linear, however we have a lot more data. The model appears to predict reaonsably well at all probabilities.
+
+### Plot Predictions: Generalized Model 1
+```{r, message=FALSE}
+ggplot(Predict(lrm.model.1.final, EJF_PER = 0:45, FUNCTCLS, TRTMT.F, fun=plogis)) +
+    theme_bw() +
+  
+    labs(x = "Ejection Fraction Percentage",
+         y = "Pr(Death)",
+         title = "Model 1 Predictions",
+         subtitle = "Across Treatment Groups and Functional Class, holding all other predictors at their medians")
+```
+
+This plot is more inline with what I would have expected; patients in higher functional classes have a higher probability of mortality at all ejection fractions. However, the plotted predictions appear more linear than exponential. Of note, there appears to be a significant difference between the Digoxin and the Placebo groups; this was not evident in the subsetted data. 
+
+### Summary Table
+
+```{r, echo=FALSE, message=FALSE}
+log.table <- data_frame(
+  Model = c("Model 1", "Model 2", "Gen Model 1"),
+  C = c("0.646", "0.639", "0.640"),
+  R2 = c("0.073", "0.071", "0.074")
+  )
+
+pander(log.table, 
+       caption = "Logistic Model Comparisons")
+```
+
+# Task 12: Questions
+
+  + **Linear Regression**: Any techniques specifically designed to deal with a bimodal outcome? Or does it not matter?
+  + **Logistic Regression**: Any methods for presenting the coefficient variables/odds ratios in a more compact format?

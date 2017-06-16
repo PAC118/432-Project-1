@@ -1,0 +1,121 @@
+---
+title: "Project 1 Peer Reviews"
+author: "Trish Campos"
+date: '`r Sys.Date()`'
+output: 
+  html_document:
+    number_sections: no
+    toc: yes
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(comment = NA)
+```
+
+```{r load packages here, include=FALSE, message=FALSE}
+library(arm); library(leaps); library(tableone)
+library(pander); library(ROCR)
+library(rms); library(forcats); library(broom)
+library(tidyverse)
+
+source("Love-boost.R")
+```
+
+```{r load your data here, include=FALSE, message=FALSE}
+ebdt <- read.csv("Schweickart - 432 Project 1 Tidydata.csv") %>% tbl_df
+ebdt$bcount <- as.factor(ebdt$bcount)
+fly <- select(ebdt, ebnb, ebtp, stage, side, count, filesize, bcount)
+
+set.seed(50)
+fly_training <-fly %>% sample_frac(.80)
+fly_test <- anti_join(fly, fly_training, by = "ebnb")
+```
+## Robert Schweickart
+
+### My Comments
+
+1. I like your title! Very descriptive!
+
+2. In task 1, it would be nice if you could provide a little more detail as to the origins of your dataset. Did you collect the data yourself or find it from an online repository? How many observations? Do these Morphological Gradients have names? I know absolutely nothing about genetics.
+
+3. [Line 43] What is the difference between as.factor() instead of factor()? If you decide that you want to rename your factor levels, you might enjoy using factor().
+
+4. How did you decide to subset the data? You had so many csv's in your raw file. Yay for cleaning in R!
+
+5. Codebook looks good! ([Line 71] Small typo in Type Column.)
+
+6. Also, why did you make two tibbles that are the same? (fly and ebdt?) 
+
+### Your Questions
+
+1. I wasn't able to get it to work with lrm, so I ran a glm instead. It looks like whatever alogrithm glm() uses is having convergence issues when you add in the `filesize` variable. Perhaps lrm() is also having convergence issues? Maybe there are some parameters you can change, i.e. lower tolerance/increase step size. 
+
+```{r, message=FALSE}
+
+dd <- datadist(fly_training)
+options(datadist = "dd")
+
+model1 <- glm(bcount ~ ebtp + stage + side + filesize, 
+              data = fly_training, 
+              family = binomial(link = logit))
+model1
+```
+
+```{r}
+# calculate variance inflation factors
+# worry if these are > 5
+vif(model1)
+```
+
+It looks like you might be having collinearity issues (`ebtpyw` and `sidev`).
+
+I also made a matrix:
+
+```{r, echo=FALSE}
+pairs (~ bcount + ebtp + stage + side + filesize,
+  data = fly_training,
+  main = "Correlation Matrix",
+  upper.panel = panel.smooth,
+  diag.panel = panel.hist,
+  lower.panel = panel.cor)
+```
+
+
+2. To avoid numbering the sections in your final output you can try: 
+
+`number_sections: no`
+
+under the output section after html_document at the beginning of the document. Keep the questions coming; I love formatting!
+
+I was able to reproduce the html file with the rmd supplied. 
+
+## Amin Saad
+
+### My Comments
+
+1. So much detail in tidying the dataset and in describing the variables! I feel like I could recreate it - Yay!
+
+2. Just an alternative for factoring and relabeling your variables:
+
+```{r, eval=FALSE}
+project1$chest.pain.F <- factor(project1$chest.pain, levels = c(1, 2, 3, 4), 
+                            labels = c("Typical Angina", "Atypical Angina", 
+                                       "Non-anginal Pain", "Asymptomatic"))
+```
+
+3. I like the way you made your codebook more than the way I made mine! It might also be nice to include percentages in the levels of the categroical variables.
+
+4. Try `include=FALSE` (this will make it so that the output shows up only in the console and not in the knitted document) for your `Hmisc::describe` line where you print the summary statistics for your variables, or hide all the output in tabs with the {.tabset} because I got tired of scrolling. Also, try `message=FALSE` around line 280 to get rid of the output from GGally plot. 
+
+5. For your scatterplot matrix you could try changing the figure height/width to see if you can get all of the text to show in the html: {r, fig.height=5, fig.width=6} (I think the units are in inches. Also, I just made up those numbers so they probably won't work.)
+
+### Your Questions
+
+1. Unfortunately, I don't believe any of those transformations were particularly good. I believe this is because you have a lot of instances of 0 ST depression. Poisson regression might be fun here. However, your models were quite good with the weird outcome distribution.    
+
+2. **Linear Model**: The first kitchen sink model contains a lot of nonlinear pairings (lots of DOFs used here and perhaps too many for the number of observations you have), but I suppose this is in the point of a kitchen sink model. Also, the nonlinear terms clearly make a difference when compared to Model B. 
+
+    **Logistic Model**: Your kitchen sink model 2 calibration plot was beautiful! 
+
+I was able to reproduce the html file with the rmd supplied.
