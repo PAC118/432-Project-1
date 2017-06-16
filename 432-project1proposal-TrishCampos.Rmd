@@ -4,6 +4,7 @@ title: A Re-analysis of Mortality and Morbidity with Digoxin Use in Heart Failur
 author: "Trish Campos"
 date: 'Version 2: `r Sys.Date()`'
 output:
+  github_document:
   html_document:
     number_sections: no
     toc: yes
@@ -116,7 +117,8 @@ codebook <- data_frame(
               "Death: 0 = No (68%), 1 = Yes (32%)", "Days since randomization to Death [1, 1770]")
 )
 
-pander(codebook, split.cells = c(10, 10, 53))
+#pander(codebook, split.cells = c(10, 10, 53))
+codebook
 ```
 
 ```{r, include=FALSE}
@@ -401,7 +403,8 @@ best_subsets <- data_frame(
                  "Age, Functional Class, Race, Heart Failure Duration, Ejection Fraction")
 )
 
-pander(best_subsets, split.cells = c(12, 5, 53), caption = "Model Descriptions for ANOVA Comparison")
+#pander(best_subsets, split.cells = c(12, 5, 53), caption = "Model Descriptions for ANOVA Comparison")
+best_subsets
 ```
 
 
@@ -584,8 +587,9 @@ coef.table <- data_frame(
   FUNCTCLS = c("-127 [-185, -69.5]", "-125 [-143, -107]"),
   RACE.F = c("-174 [-269, -80.4]", "-92.5 [-127, -58.2]"))
 
-pander(coef.table, split.cells = c(10, 17, 18, 18, 20), 
-       caption = "Model 4 Coefficient Estimates [95% CI]")
+#pander(coef.table, split.cells = c(10, 17, 18, 18, 20), 
+       #caption = "Model 4 Coefficient Estimates [95% CI]")
+coef.table
 ```
 
 The coefficients are actually quite similar. `EJF_PER` and `RACE.F` show the greatest differences in the estimates, however their 95% CI still overlap. 
@@ -864,8 +868,9 @@ log.table <- data_frame(
   R2 = c("0.073", "0.071", "0.074")
   )
 
-pander(log.table, 
-       caption = "Logistic Model Comparisons")
+#pander(log.table, 
+       #caption = "Logistic Model Comparisons")
+log.table
 ```
 
 # Task 12: Questions
